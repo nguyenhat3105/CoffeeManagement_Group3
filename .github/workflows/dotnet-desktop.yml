@@ -1,0 +1,90 @@
+# Tên của workflow
+name: .NET Core Desktop Build
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        configuration: [Debug, Release] # Build cả 2 chế độ
+
+    runs-on: windows-latest # Bắt buộc dùng Windows cho ứng dụng WPF
+
+    env:
+      # Tên file solution của bạn
+      Solution_Name: CoffeeManagementProject.sln
+      
+      # Tên thư mục chứa dự án .wapproj (đóng gói)
+      # LƯU Ý: Bạn cần tạo và push dự án này lên repo
+      Wap_Project_Directory: CoffeeManagementProject.Package
+      
+      # Đường dẫn đầy đủ đến file .wapproj
+      # LƯU Ý: Bạn cần tạo và push dự án này lên repo
+      Wap_Project_Path: CoffeeManagementProject.Package\CoffeeManagementProject.Package.wapproj
+
+      # Bỏ qua Test_Project_Path vì bạn chưa có project test
+      # Test_Project_Path: your-test-project-path
+
+    steps:
+    # 1. Checkout code từ repository về máy ảo build
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    # 2. Cài đặt .NET SDK (phiên bản 8.0)
+    - name: Install .NET Core
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: 8.0.x
+
+    # 3. Thêm MSBuild vào PATH
+    - name: Setup MSBuild.exe
+      uses: microsoft/setup-msbuild@v2
+
+    # 4. Chạy unit test (nếu có)
+    - name: Execute unit tests
+      run: dotnet test $env:Solution_Name
+
+    # 5. Restore NuGet packages cho solution
+    - name: Restore the application
+      run: msbuild $env:Solution_Name /t:Restore /p:Configuration=$env:Configuration
+      env:
+        Configuration: ${{ matrix.configuration }}
+
+    # ----------------------------------------------------------------
+    # CÁC BƯỚC KÝ TÊN (SIGNING)
+    # Các bước này đã bị COMMENT (vô hiệu hóa)
+    # Vì bạn chưa thiết lập secrets 'Base64_Encoded_Pfx' và 'Pfx_Key'
+    # Khi nào bạn sẵn sàng để ký tên ứng dụng, hãy mở comment các khối này
+    # ----------------------------------------------------------------
+    # - name: Decode the pfx
+    #   run: |
+    #     $pfx_cert_byte = [System.Convert]::FromBase64String("${{ secrets.Base64_Encoded_Pfx }}")
+    #     $certificatePath = Join-Path -Path $env:Wap_Project_Directory -ChildPath GitHubActionsWorkflow.pfx
+    #     [IO.File]::WriteAllBytes("$certificatePath", $pfx_cert_byte)
+
+    # 6. Build và tạo gói MSIX
+    - name: Create the app package
+      run: msbuild $env:Wap_Project_Path /p:Configuration=$env:Configuration /p:UapAppxPackageBuildMode=$env:Appx_Package_Build_Mode /p:AppxBundle=$env:Appx_Bundle # /p:PackageCertificateKeyFile=GitHubActionsWorkflow.pfx /p:PackageCertificatePassword=${{ secrets.Pfx_Key }}
+      env:
+        Appx_Bundle: Always
+        Appx_Bundle_Platforms: x86|x64
+        # Đổi thành 'Sideload' để build không cần ký tên
+        Appx_Package_Build_Mode: Sideload 
+        Configuration: ${{ matrix.configuration }}
+
+    # - name: Remove the pfx
+    #   run: Remove-Item -path $env:Wap_Project_Directory\GitHubActionsWorkflow.pfx
+
+    # 7. Upload gói MSIX đã build làm "Artifact"
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: MSIX Package (${{ matrix.configuration }})
+        path: ${{ env.Wap_Project_Directory }}\AppPackages
